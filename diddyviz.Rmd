@@ -1,0 +1,128 @@
+---
+title: "Diddy Visualizations"
+output: html_document
+date: "2024-11-01"
+---
+
+# Initial Visualizations
+
+```{r}
+library(tidyverse)
+library(forcats)
+```
+
+```{r}
+diddy_csv <- read_csv("~/BSAFall2024/DiddyProject/Diddy-Stats/diddygames.csv")
+```
+
+```{r}
+diddy_csv <- diddy_csv |> 
+  select(-`...1`)
+```
+
+```{r}
+diddy_csv |> head()
+```
+
+### Team Colors
+
+<https://nbacolors.com/team/miami-heat-colors>
+
+```{r}
+team_colors <- c(
+  "MIA" = "#98002e",
+  "BOS" = "#007a33",
+  "NJN" = "#c6cfd4",
+  "BRK" = "black",
+  "CHI" = "#ce1141",
+  "PHO" = "#e56020",
+  "DEN" = "#0e2240",
+  "GSW" = "#1d428a",
+  "IND" = "#002d62",
+  "MIL" = "#00471b",
+  "NOP" = "#85714d",
+  "NOH" = "#17bfdd",
+  "OKC" = "#007ac1",
+  "PHI" = "#006bb6",
+  "SAC" = "#5a2d81",
+  "TOR" = "#ba0c2f",
+  "CLE" = "#860038",
+  "LAL" = "#552583",
+  "LAC" = "#c8102e",
+  "CHO" = "#00788c",
+  "ATL" = "#e03a3e",
+  "DAL" = "#00538c",
+  "DET" = "#1d42ba",
+  "HOU" = "#ffc72c",
+  "MEM" = "#5d76a9",
+  "MIN" = "#78be20",
+  "NYK" = "#f58426",
+  "ORL" = "#0077c0",
+  "POR" = "#e03a3e",
+  "SAS" = "#8a8d8f",
+  "UTA" = "#f9a01b",
+  "WAS" = "#002b5c"
+)
+```
+
+## Getting distribution of teams
+
+Diddy went to 31 Games, which were the teams he watched the most often
+
+```{r}
+game_count_df <- diddy_csv |>
+  group_by(date, team) |>
+  slice(1) |>
+  ungroup()
+```
+
+```{r}
+game_count_df
+```
+
+```{r}
+ggplot(game_count_df, aes(x = fct_infreq(team), fill = team)) + 
+  geom_bar() + 
+  scale_fill_manual(values = team_colors) + 
+  labs(title="Diddy's Favorite Teams to Watch", x="Teams", y="Number of Games with Diddy in Attendance") +
+  guides(fill="none") +
+  theme_classic()
+```
+
+## Getting the Distribution of Players
+
+```{r}
+player_count_df <- diddy_csv |> 
+  count(player, sort = TRUE) |>
+  slice_head(n = 20)
+
+player_count_df$player
+```
+
+```{r}
+top_10_players <- diddy_csv |>
+  filter(player %in% player_count_df$player) |> 
+  arrange(player)
+```
+
+```{r}
+top_10_players
+```
+
+```{r}
+ggplot(top_10_players, aes(x = fct_infreq(player), fill = team)) +
+  geom_bar() + 
+  scale_fill_manual(values = team_colors) + 
+  labs(title="The Top 20 Players with the Most Diddy Games",x="Player", y="Number of Games with Diddy in Attendance") +
+  theme_classic() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+## Average Stats of the Top 20 Players
+
+### Points
+
+```{r}
+
+```
