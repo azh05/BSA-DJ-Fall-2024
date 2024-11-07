@@ -29,11 +29,6 @@ diddy_csv |> head()
 diddy_csv <- diddy_csv |> filter(mp != "Did Not Dress")
 ```
 
-```{r}
-diddy_csv <- diddy_csv |> 
-  mutate(player = if_else(player == "Dwyane Wade", "Dwayne Wade", player))
-```
-
 ### Team Colors
 
 <https://nbacolors.com/team/miami-heat-colors>
@@ -100,6 +95,10 @@ ggplot(game_count_df, aes(x = fct_infreq(team), fill = team)) +
 ```
 
 ## Getting the Distribution of Players
+
+```{r}
+diddy_csv$player |> length()
+```
 
 ```{r}
 player_count_df <- diddy_csv |> 
@@ -223,11 +222,11 @@ For each player I want to see how their games compare to their averages for that
 ```{r}
 combine_career_diddy <- function(diddy_df, career_df, player_name) {
   diddy <- diddy_df |> 
-    filter(player == player_name) |>
+    filter(tolower(player) == tolower(player_name)) |>
     rename(season_type = game_type)
   
   career <- career_df |>
-    filter(player == player_name) |>
+    filter(tolower(player) == tolower(player_name)) |>
     select(-player)
   
   combined_df <- diddy |>
@@ -257,22 +256,85 @@ combined_plots <- function(combined_df, stat) {
       stat_type == stat ~ paste("Diddy", stat)
     ))
   
+  
+  
+  combined_plots <- function(combined_df, stat) { 
+  player_name <- combined_df$player[1]
+  select_cols <- c("player", "season", "season_type", "date", stat, paste0("career_", stat))
+  
+  combined_df <- combined_df |>
+    select(all_of(select_cols))
+  
+  combined_df_long <- combined_df |> 
+    pivot_longer(cols = all_of(c(stat, paste0("career_", stat))),
+                 names_to = "stat_type",
+                 values_to = "value") |>
+    mutate(stat_type = case_when(
+      stat_type == paste0("career_", stat) ~ paste("Season", stat),
+      stat_type == stat ~ paste("Diddy", stat)
+    ))
+  
+  fill_labels <- setNames(c("pink", "#80ee90"), 
+                          c(paste0("Diddy ", stat), paste0("Season ", stat)))
+  
   ggplot(combined_df_long, 
          aes(x = factor(date), y = value, fill = stat_type)) +
     geom_bar(stat = "identity", position = position_dodge()) +
+    scale_fill_manual(values = fill_labels) +
     facet_wrap(~season_type, nrow = 2) +
-    labs(x = "Date of Game", y = stat, title=paste0("Diddy's effect on ", player_name, "'s ", stat)) + 
-    theme_bw() + 
-    theme(axis.text.x = element_blank())
+    labs(x = "Date of Game", y = stat, title=paste0("Diddy's effect on ", player_name, "'s ", stat), fill = "Stat Type") + 
+    theme_bw()
 }
 ```
 
-## Dwayne Wade
+```{r}
+stat_differential <- function(combined_df) {
+  # c(pts, pf, tov, blk, stl, ast, trb)
+  
+  diff_df <- combined_df |> 
+    mutate(diff_pts = pts - career_pts,
+           diff_pf = pf - career_pf,
+           diff_tov = tov - career_tov,
+           diff_blk = blk - career_blk,
+           diff_stl = stl - career_stl, 
+           diff_ast = ast - career_ast,
+           diff_trb = trb - career_trb,
+             ) |> 
+    select(
+          player, season, season_type, diff_pts, diff_ast, diff_trb, diff_tov, diff_blk, diff_stl, diff_pf
+      )
+  
+  return(diff_df)
+}
+
+```
 
 ```{r}
-dwade <- "Dwayne Wade"
+# take output of stat differential and get the averages grouped by season_type
+diff_averages <- function(stat_diff_df) {
+  player <- stat_diff_df$player[1]
+  
+  diff_avgs <- stat_diff_df |> group_by(season_type) |>
+      summarize(across(starts_with('diff_'), mean))
+  
+  diff_avgs$player <- player
+  
+  diff_avgs <- diff_avgs |> select(player, everything())
+  
+  return(diff_avgs)
+}
+```
 
-dwade_combined_df <- combine_career_diddy(top_20_playoffs_seasons, career_stats_pg_df, dwade)
+## Dwyane Wade
+
+```{r}
+dwade <- "Dwyane Wade"
+
+dwade_combined_df <- combine_career_diddy(top_20_playoffs_seasons, career_stats_pg_df, dwade) 
+```
+
+```{r}
+dwade_combined_df
 ```
 
 ```{r}
@@ -285,15 +347,105 @@ dwade_trb <- combined_plots(dwade_combined_df, "trb")
 dwade_pts
 ```
 
+```{r}
+dwade_ast
+```
+
+```{r}
+dwade_trb
+```
+
+```{r}
+dwade_stat_diff <- stat_differential(dwade_combined_df)
+
+dwade_stat_diff
+```
+
+```{r}
+diff_averages(dwade_stat_diff)
+```
+
 ## Kobe Bryant
 
+```{r}
+kobe <- "Kobe Bryant"
+
+kobe_combined_df <- combine_career_diddy(top_20_playoffs_seasons, career_stats_pg_df, kobe)
+```
+
+```{r}
+kobe_combined_df
+```
+
+```{r}
+kobe_pts <- combined_plots(kobe_combined_df, "pts")
+kobe_ast <- combined_plots(kobe_combined_df, "ast")
+kobe_trb <- combined_plots(kobe_combined_df, "trb")
+```
+
+```{r}
+kobe_pts
+```
+
+```{r}
+kobe_ast
+```
+
+```{r}
+kobe_trb
+```
+
+```{r}
+kobe_stat_diff <- stat_differential(kobe_combined_df)
+```
+
+```{r}
+kobe_stat_diff
+```
+
 ## Lamar Odom
+
+```{r}
+lodom <- "Lamar Odom"
+
+lodom_combined_df <- combine_career_diddy(top_20_playoffs_seasons, career_stats_pg_df, lodom)
+lodom_pts <- combined_plots(lodom_combined_df, "pts")
+lodom_ast <- combined_plots(lodom_combined_df, "ast")
+lodom_trb <- combined_plots(lodom_combined_df, "trb")
+```
+
+```{r}
+lodom_pts
+lodom_ast
+lodom_trb
+```
+
+```{r}
+stat_differential(lodom_combined_df)
+```
 
 ## Pau Gasol
 
 ## Derek Fisher
 
 ## Lebron James
+
+```{r}
+goat <- "LeBron James"
+
+goat_combined_df <- combine_career_diddy(top_20_playoffs_seasons, career_stats_pg_df, goat)
+goat_pts <- combined_plots(goat_combined_df, "pts")
+goat_ast <- combined_plots(goat_combined_df, "ast")
+goat_trb <- combined_plots(goat_combined_df, "trb")
+
+stat_differential(goat_combined_df)
+```
+
+```{r}
+goat_pts
+goat_ast
+goat_trb
+```
 
 ## Jordan Farmar
 
@@ -313,7 +465,22 @@ dwade_pts
 
 ## Paul Pierce
 
-## Rajon Rondo 
+```{r}
+ppierce <- "Paul Pierce"
+
+ppierce_combined_df <- combine_career_diddy(top_20_playoffs_seasons, career_stats_pg_df, ppierce)
+ppierce_pts <- combined_plots(ppierce_combined_df, "pts")
+ppierce_ast <- combined_plots(ppierce_combined_df, "ast")
+ppierce_trb <- combined_plots(ppierce_combined_df, "trb")
+
+stat_differential(ppierce_combined_df)
+```
+
+```{r}
+
+```
+
+## Rajon Rondo
 
 ## Ray Allen
 
@@ -322,3 +489,71 @@ dwade_pts
 ## J.R. Smith
 
 ## Chris Bosh
+
+## Everybody combined
+
+```{r}
+get_diff_all <- function(diddy_df, career_df) {
+  players <- diddy_df$player |> unique() |> as.list()
+  
+  combined_df_list <- lapply(players, function(name) {
+    combine_career_diddy(diddy_df, career_df, name)
+  })
+  
+  stat_diff_list <- lapply(combined_df_list, function(df) stat_differential(df))
+  
+  avg_stat_diff_list <- lapply(stat_diff_list, function(df) diff_averages(df))
+  
+  return(bind_rows(avg_stat_diff_list))
+}
+```
+
+```{r}
+diff_all_df <- get_diff_all(top_20_playoffs_seasons, career_stats_pg_df)
+```
+
+```{r}
+ggplot(diff_all_df, aes(x = player, y = diff_pts, fill = diff_pts > 0)) +
+  geom_col() +
+  scale_fill_manual(values = c("TRUE" = "green", "FALSE" = "red")) +
+  labs(x = "Players", y = "Diddy Point Differential") +
+  facet_wrap(~season_type, nrow = 2) + 
+  theme_bw() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1))
+  
+```
+
+```{r}
+ggplot(diff_all_df, aes(x = player, y = diff_ast, fill = diff_ast > 0)) +
+  geom_col() +
+  scale_fill_manual(values = c("TRUE" = "green", "FALSE" = "red")) +
+  labs(x = "Players", y = "Diddy Assist Differential") +
+  facet_wrap(~season_type, nrow = 2) + 
+  theme_bw() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1))
+  
+```
+
+```{r}
+ggplot(diff_all_df, aes(x = player, y = diff_trb, fill = diff_trb > 0)) +
+  geom_col() +
+  scale_fill_manual(values = c("TRUE" = "green", "FALSE" = "red")) +
+  labs(x = "Players", y = "Diddy Rebound Differential") +
+  facet_wrap(~season_type, nrow = 2) + 
+  theme_bw() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1))
+  
+```
+
+```{r}
+all_positive_df <- diff_all_df |> 
+  filter(diff_ast > 0 & diff_pts > 0 & diff_trb > 0)
+```
+
+```{r}
+all_positive_df
+```
+
+```{r}
+summary(c(7, 4, 6, 3, 4, 4, 5))
+```
