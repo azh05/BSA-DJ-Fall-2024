@@ -557,3 +557,58 @@ all_positive_df
 ```{r}
 summary(c(7, 4, 6, 3, 4, 4, 5))
 ```
+
+## Tangent into associations between PRA and TOs
+
+```{r}
+pp_playoff_df <- read_csv("~/BSAFall2024/DiddyProject/career_data/paul_pierce_playoffs.csv")
+
+pp_playoff_df <- pp_playoff_df |> select(-`...1`)
+```
+
+Creating the PRA stat
+
+```{r}
+pp_playoff_df <- pp_playoff_df |> 
+  mutate(pra = pts + trb + ast)
+```
+
+```{r}
+pp_playoff_df
+```
+
+```{r}
+pp_lm <- lm(tov~pra, data = pp_playoff_df)
+```
+
+```{r}
+summary(pp_lm)
+```
+
+```{r}
+ppierce_combined_df$date
+```
+
+```{r}
+pp_playoff_df <- pp_playoff_df |> 
+  mutate(diddy = if_else(date_game %in% ppierce_combined_df$date, T, F))
+```
+
+```{r}
+ggplot(pp_playoff_df, aes(x = pra, y = tov)) + 
+  geom_point(aes(color = diddy)) + 
+  geom_smooth(method="lm", color = "black", alpha = 0.7) + 
+  labs(y = "Turnovers", x = "Points, Rebounds, and Assists (PRA)", title = "Relationship between PRA and TOV for Paul Pierce in the Playoffs", color = "Diddy Attendance") +
+  theme_classic()
+```
+
+## All Negative
+
+```{r}
+all_negative_df <- diff_all_df |> 
+  filter(diff_ast < 0 & diff_pts < 0 & diff_trb < 0)
+```
+
+```{r}
+all_negative_df
+```
