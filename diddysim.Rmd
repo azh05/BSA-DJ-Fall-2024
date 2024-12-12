@@ -1,0 +1,914 @@
+---
+title: "Diddy Simulator"
+output: html_document
+date: "2024-11-13"
+---
+
+```{r}
+install.packages(c("FactoMiner", "factoextra"))
+```
+
+```{r}
+library(tidyverse)
+library(FactoMineR)
+library(factoextra)
+```
+
+```{r}
+player_list <- list(
+  "Dwyane Wade",
+  "Paul Pierce",
+  "Kevin Garnett", 
+  "Rajon Rondo",
+  "Pau Gasol",
+  "gasol James"
+)
+```
+
+# Defining Functions
+
+## CSV getter function
+
+```{r}
+get_csv <- function(name, is_playoffs) {
+  name <- name |> tolower()
+  suffix <- gsub(" ", "_", name)
+  
+  if(is_playoffs) {
+    path <- paste0("~/BSAFall2024/DiddyProject/career_data/", suffix, "_playoffs.csv")
+  } else {
+    path <- paste0("~/BSAFall2024/DiddyProject/career_data/", suffix, "_regular.csv")
+  }
+  
+  df <- read_csv(path)
+  
+  df |> filter(!is.na(mp))
+}
+```
+
+```{r}
+get_csv("Lebron James", F)
+```
+
+## Simulator
+
+```{r}
+# Returns a dataframe with the normal rows + which iteration of simulation
+# player = player name in format Firstname Lastname
+# N = the number of iterations of simulation
+# regular_years = list of strings containing the regular season years
+#             list("2010-2011", "2020-21")
+# playoff_years = list of numerics containing the playoff season years
+#             list(2005, 2012)
+
+n_sim <- function(player, N, regular_years = NULL, playoff_years = NULL, seed = 10) {
+  set.seed(seed)
+  playoff_df <- get_csv(player, TRUE)
+  regular_df <- get_csv(player, FALSE)
+  
+  if("...1" %in% colnames(playoff_df)) {
+    playoff_df <- playoff_df |> select(-`...1`)
+  } 
+  
+  if("...1" %in% colnames(regular_df)) {
+    regular_df <- regular_df |> select(-`...1`)
+  }
+  
+  playoff_list <- lapply(playoff_years, function(year) {
+    prev_year <- toString(year - 1)
+    cur_year_str <- substr(toString(year), 3, 4)
+    season_str <- paste0(prev_year, "-", 
+                         cur_year_str)
+    
+    playoff_df |> 
+      filter(year(date_game) == year) |>
+      mutate(season_type = "playoff", season = season_str)
+  })
+
+  regular_list <- lapply(regular_years, function(year) {
+    regular_df |>
+      filter(season == year) |> 
+      mutate(season_type = "regular", season = paste0(substr(season, 1, 5), substr(season, nchar(season) - 1, nchar(season)))) |> 
+      select(-c(game_result, opp_id, team_id))
+  })
+
+  
+  combined_list <- append(regular_list, playoff_list)
+  
+  sampler_list <- lapply(seq_len(N), function(it) {
+    df <- do.call(rbind, lapply(combined_list, function(df) {
+      sample_n(df, 1)
+    }))
+    
+    df$sim_id <- it
+    
+    return(df)
+  })
+  
+  sampler_df <- do.call(rbind, sampler_list)
+  
+  sampler_df <- sampler_df |> 
+    group_by(sim_id) |>
+    arrange(date_game, .by_group = T) |> 
+    ungroup() 
+  return(sampler_df)
+}
+```
+
+## Evaluation
+
+```{r}
+diddy_csv <- read_csv("~/BSAFall2024/DiddyProject/Diddy-Stats/diddygames.csv")
+
+diddy_csv <- diddy_csv |>
+  select(-`...1`)
+```
+
+```{r}
+diddy_csv |> head()
+```
+
+```{r}
+stat_differential <- function(combined_df) {
+  # c(pts, pf, tov, blk, stl, ast, trb)
+  
+  diff_df <- combined_df |> 
+    mutate(diff_pts = pts - career_pts,
+           diff_pf = pf - career_pf,
+           diff_tov = tov - career_tov,
+           diff_blk = blk - career_blk,
+           diff_stl = stl - career_stl, 
+           diff_ast = ast - career_ast,
+           diff_trb = trb - career_trb,
+             ) |> 
+    select(
+          player, season, season_type, diff_pts, diff_ast, diff_trb, diff_tov, diff_blk, diff_stl, diff_pf
+      )
+  
+  return(diff_df)
+}
+```
+
+```{r}
+# input: Simulator df and career_df
+eval_sim <- function(player_name, sim_df, career_df) {
+  career_df <- career_df |> 
+    filter(player == player_name)
+  
+  # Combining
+  combined_df <- left_join(sim_df, career_df |> rename_with(~paste0("career_", .x), -c(season, season_type, player)), by = c("season", "season_type", "player"))
+  
+  # Getting the diffs
+  stat_diff <- stat_differential(combined_df)
+  stat_diff$sim_id <- combined_df$sim_id
+  
+  return(stat_diff)
+}
+
+# input: output of eval_sim
+mean_eval_sim <- function(eval_df) {
+  mean_df <- eval_df |>
+    group_by(sim_id, season_type) |>
+    summarize(across(c(diff_pts, diff_ast, diff_trb, diff_tov,
+                       diff_blk, diff_stl, diff_pf), mean), .groups = "drop")
+  
+  return(mean_df)
+}
+```
+
+# Player Simulation
+
+```{r}
+career_stats_df <- read_csv("~/BSAFall2024/DiddyProject/Diddy-Stats/top20.csv")
+career_stats_df <- career_stats_df |> 
+  select(-c(pos, lg_id, team_id, gs, `...1`, age, DUMMY, trp_dbl))
+career_stats_pg_df <- career_stats_df |>
+  mutate(across(c(mp, fg, fga, fg3, fg3a, fg2, fg2a, ft, fta, orb, drb, trb, ast, stl,
+                  blk, tov, pf, pts), function(x) round(x / g, digits = 2)))
+```
+
+## Dwyane Wade
+
+```{r}
+wade_sim <- n_sim("Dwyane Wade", 1000, list("2004-2005", "2004-2005", "2004-2005", "2005-2006", "2010-2011", "2011-2012", "2012-2013"))
+```
+
+```{r}
+wade_eval_df <- eval_sim("Dwyane Wade", wade_sim, career_stats_pg_df)
+```
+
+```{r}
+mean_wade_df <- mean_eval_sim(wade_eval_df)
+```
+
+```{r}
+# Add a new column to identify the condition where diff_pts is near 2.53
+mean_wade_df$color_group_pts <- ifelse(mean_wade_df$diff_pts >= 2.53 - 0.4 & mean_wade_df$diff_pts <= 2.53 + 0.1, "Diddy", "Simulated")
+
+# Create the plot
+ggplot(mean_wade_df, aes(x = diff_pts, fill = color_group_pts)) +
+  geom_histogram(bins = 60) + 
+  scale_fill_manual(values = c("Diddy" = "red", "Simulated" = "black")) +  # Set colors
+  labs(title = "Dwyane Wade Simulated Point Differential",
+       y = "Frequency", 
+       x = "Point Differential", fill = "") +
+  theme_bw()
+```
+
+```{r}
+# Add a new column to identify the condition where diff_pts is near 2.53
+mean_wade_df$color_group_trb <- ifelse(mean_wade_df$diff_trb >= 0.08 - 0.2 & mean_wade_df$diff_trb <= 0.08 + 0.1, "Diddy", "Simulated")
+
+# Create the plot
+ggplot(mean_wade_df, aes(x = diff_trb, fill = color_group_trb)) +
+  geom_histogram(bins = 40) + 
+  scale_fill_manual(values = c("Diddy" = "red", "Simulated" = "black")) +  # Set colors
+  labs(title = "Dwyane Wade Simulated Point Differential",
+       y = "Frequency", 
+       x = "Rebound Differential", fill = "") +
+  theme_bw()
+```
+
+```{r}
+# Add a new column to identify the condition where diff_pts is near 2.53
+mean_wade_df$color_group_ast <- ifelse(mean_wade_df$diff_ast >= 0.11 - 0.1 & mean_wade_df$diff_ast <= 0.11 + 0.1, "Diddy", "Simulated")
+
+# Create the plot
+ggplot(mean_wade_df, aes(x = diff_ast, fill = color_group_ast)) +
+  geom_histogram(bins = 35) + 
+  scale_fill_manual(values = c("Diddy" = "red", "Simulated" = "black")) +  # Set colors
+  labs(title = "Dwyane Wade Simulated Assist Differential",
+       y = "Frequency", 
+       x = "Assist Differential", fill = "") +
+  theme_bw()
+```
+
+```{r}
+# Add a new column to identify the condition where diff_pts is near 2.53
+mean_wade_df$color_group_tov <- ifelse(mean_wade_df$diff_tov >= 1.19 - 0.1 & mean_wade_df$diff_tov <= 1.19 + 0.1, "Diddy", "Simulated")
+
+# Create the plot
+ggplot(mean_wade_df, aes(x = diff_tov, fill = color_group_tov)) +
+  geom_histogram(bins = 30) + 
+  scale_fill_manual(values = c("Diddy" = "red", "Simulated" = "black")) +  # Set colors
+  labs(title = "Dwyane Wade Simulated TOV Differential",
+       y = "Frequency", 
+       x = "TOV Differential", fill = "") +
+  theme_bw()
+```
+
+```{r}
+sum(mean_wade_df$diff_tov < 1.19)
+```
+
+```{r}
+wade_diddy_vec <- c(pts = 2.53, ast = 0.11, trb = 0.08, blk = -0.02, stl = 0.34, tov = 1.19,
+                    pf = -0.53)
+```
+
+```{r}
+wade_diddy_vec
+```
+
+### Testing for significance
+
+```{r}
+diddy_t_test <- function(mean_sim_df, diddy_diff_vec) {
+  return(list(
+    pts = t.test(mean_sim_df$diff_pts, mu = diddy_diff_vec["pts"]),
+    trb = t.test(mean_sim_df$diff_trb, mu = diddy_diff_vec["trb"]),
+    ast = t.test(mean_sim_df$diff_ast, mu = diddy_diff_vec["ast"]),
+    blk = t.test(mean_sim_df$diff_blk, mu = diddy_diff_vec["blk"]),
+    stl = t.test(mean_sim_df$diff_stl, mu = diddy_diff_vec["stl"]),
+    tov = t.test(mean_sim_df$diff_tov, mu = diddy_diff_vec["tov"]),
+    pf = t.test(mean_sim_df$diff_pf, mu = diddy_diff_vec["pf"])
+  ))
+}
+
+```
+
+```{r}
+diddy_t_test(mean_wade_df, wade_diddy_vec)
+```
+
+### Mahalanobis Distance
+
+Perhaps its better to not separate the values of each sim vector and use the whole vector
+
+-   Mahalanobis Distance allows us to see the distance between a given vector and the mean vector given the covariance
+
+<https://www.r-bloggers.com/2021/08/how-to-calculate-mahalanobis-distance-in-r/>
+
+```{r}
+# diddy_vec in the form pts, ast, trb, blk, stl, tov, pf
+diddy_dist <- function(sim_eval_data, diddy_vec) {
+  df <- sim_eval_data |> 
+    select(diff_pts, diff_ast, diff_trb, diff_blk, diff_stl, diff_tov, diff_pf) |>
+    rename(
+      pts = diff_pts,
+      ast = diff_ast,
+      trb = diff_trb,
+      blk = diff_blk,
+      stl = diff_stl,
+      tov = diff_tov,
+      pf  = diff_pf
+    )
+  
+  sim_cov <- cov(df)
+  sim_mean_vec <- colMeans(df)
+  
+  
+  return(mahalanobis(diddy_vec, sim_mean_vec, sim_cov))
+}
+
+sim_dist <- function(sim_eval_data) {
+  df <- sim_eval_data |> 
+    select(diff_pts, diff_ast, diff_trb, diff_blk, diff_stl, diff_tov, diff_pf) |>
+    rename(
+      pts = diff_pts,
+      ast = diff_ast,
+      trb = diff_trb,
+      blk = diff_blk,
+      stl = diff_stl,
+      tov = diff_tov,
+      pf  = diff_pf
+    )
+  
+  sim_cov <- cov(df)
+  sim_mean_vec <- colMeans(df)
+  
+  df$dist <- mahalanobis(df, sim_mean_vec, sim_cov)
+  
+  return(df)
+}
+```
+
+```{r}
+wade_diddy_dist <- diddy_dist(mean_wade_df, wade_diddy_vec)
+```
+
+```{r}
+wade_dist_df <- sim_dist(mean_wade_df) |> arrange(dist)
+wade_dist_df$diddy <- F
+wade_diddy_row <- c(wade_diddy_vec, dist = wade_diddy_dist, diddy = T)
+
+wade_dist_df <- rbind(wade_dist_df, wade_diddy_row)
+```
+
+### Calculating the pvalues
+
+```{r}
+# 6 degrees of freedom because 7 variables 
+dist_pvalue <- function(dist_df) {
+  dist_df$pvalue <- pchisq(dist_df$dist, df=6, lower.tail = F)
+  
+  return(dist_df)
+}
+```
+
+```{r}
+dist_pvalue(wade_dist_df) |> filter(diddy == T)
+```
+
+### Visualizing with PCA
+
+```{r}
+pca_diddy_viz <- function(pca_obj, dist_df) {
+  which_diddy_vec <- dist_df$diddy 
+  
+  df <- pca_obj$ind$coord |> as_tibble()
+  df$diddy <- which_diddy_vec
+  
+  g <- ggplot(df, aes(x = Dim.1, y = Dim.2, color = as.factor(diddy),
+                      shape = as.factor(diddy))) + 
+    geom_point(alpha = 1, size = 5) + 
+    scale_shape_manual(values = c("\u25CF", "\u2665"),
+                       labels = c("False", "True")) + 
+  theme_minimal()
+  
+  return(g)
+}
+```
+
+```{r}
+wade_dist_df.pca <- PCA(wade_dist_df |> select(-c(diddy, dist)), scale.unit = T, graph = F)
+```
+
+```{r}
+fviz_eig(wade_dist_df.pca, addlabels = TRUE, main = "Statistics Represented in Lower Dimensional Components")
+```
+
+```{r}
+pca_diddy_viz(wade_dist_df.pca, wade_dist_df) + 
+  scale_color_manual(values = c("0" = "gray",
+                                "1" = "red"), 
+                       labels = c("False", "True")) +
+  labs(title = "Dwyane Wade's Diddy Games vs Simulated Games",
+       x = "Dimension 1",
+       y = "Dimension 2",
+       color = "Diddy Games", 
+       shape = "Diddy Games")
+```
+
+## Paul Pierce
+
+```{r}
+pierce <- get_csv(name = "Paul Pierce", is_playoffs = T)
+```
+
+```{r}
+pierce_sim <- n_sim("Paul Pierce", 1000, playoff_years = list(2003, 2008, 2010, 2011, 2013))
+```
+
+```{r}
+pierce_eval_df <- eval_sim("Paul Pierce", pierce_sim, career_stats_pg_df)
+mean_pierce_df <- mean_eval_sim(pierce_eval_df)
+```
+
+```{r}
+pierce_diddy_vec <- c(pts = 2.90, ast = 1.24, trb = 0.48, blk = -0.13, stl = -0.27, tov = 0.68, pf = 0.12)
+```
+
+```{r}
+pierce_diddy_dist <- diddy_dist(mean_pierce_df, pierce_diddy_vec)
+pierce_diddy_dist
+```
+
+```{r}
+pierce_eval_df
+```
+
+```{r}
+pierce_dist_df <- sim_dist(mean_pierce_df) |> arrange(dist)
+pierce_dist_df$diddy <- F
+pierce_diddy_row <- c(pierce_diddy_vec, dist = pierce_diddy_dist, diddy = T)
+
+pierce_dist_df <- rbind(pierce_dist_df, pierce_diddy_row)
+```
+
+```{r}
+dist_pvalue(pierce_dist_df) |> filter(diddy == T)
+```
+
+```{r}
+pierce_dist_df.pca <- PCA(pierce_dist_df |> select(-c(diddy, dist)), scale.unit = T, graph = F)
+```
+
+```{r}
+pca_diddy_viz(pierce_dist_df.pca, pierce_dist_df) + 
+  scale_color_manual(values = c("0" = "gray",
+                                "1" = "red"), 
+                       labels = c("False", "True")) +
+  labs(title = "Paul Pierce's Diddy Games vs Simulated Games",
+       x = "Dimension 1",
+       y = "Dimension 2",
+       color = "Diddy Games", 
+       shape = "Diddy Games")
+```
+
+```{r}
+# Add a new column to identify the condition where diff_pts is near 2.53
+mean_pierce_df$color_group_ast <- ifelse(mean_pierce_df$diff_ast >= 1.24 - 0.05 & mean_pierce_df$diff_ast <= 1.24 + 0.05, "Diddy", "Simulated")
+
+# Create the plot
+ggplot(mean_pierce_df, aes(x = diff_ast, fill = color_group_ast)) +
+  geom_histogram(bins = 25) + 
+  scale_fill_manual(values = c("Diddy" = "red", "Simulated" = "black")) +  # Set colors
+  labs(title = "Paul Pierce Simulated Assist Differential",
+       y = "Frequency", 
+       x = "Assist Differential", fill = "") +
+  theme_bw()
+```
+
+```{r}
+# Add a new column to identify the condition where diff_pts is near 2.53
+mean_pierce_df$color_group_pts <- ifelse(mean_pierce_df$diff_pts >= 2.90 - 0.15 & mean_pierce_df$diff_pts <= 2.90 + 0.45, "Diddy", "Simulated")
+
+# Create the plot
+ggplot(mean_pierce_df, aes(x = diff_pts, fill = color_group_pts)) +
+  geom_histogram(bins = 50) + 
+  scale_fill_manual(values = c("Diddy" = "red", "Simulated" = "black")) +  # Set colors
+  labs(title = "Dwyane Wade Simulated Point Differential",
+       y = "Frequency", 
+       x = "Point Differential", fill = "") +
+  theme_bw()
+```
+
+```{r}
+sum(mean_pierce_df$diff_ast < 1.24)
+```
+
+## Rondo
+
+```{r}
+rondo_sim <- n_sim("Rajon Rondo", 1000, playoff_years = list(2008, 2010, 2011, 2021))
+```
+
+```{r}
+rondo_eval_df <- eval_sim("Rajon Rondo", rondo_sim, career_stats_pg_df)
+mean_rondo_df <- mean_eval_sim(rondo_eval_df)
+```
+
+```{r}
+rondo_diddy_vec <- c(pts = -5.31, ast = -3.08, trb = -0.44, blk = 0.09, stl = 0.22, tov = 0.11, pf = -0.60)
+rondo_diddy_dist <- diddy_dist(mean_rondo_df, rondo_diddy_vec)
+rondo_diddy_dist
+```
+
+```{r}
+rondo_dist_df <- sim_dist(mean_rondo_df) |> arrange(dist)
+rondo_dist_df$diddy <- F
+rondo_diddy_row <- c(rondo_diddy_vec, dist = rondo_diddy_dist, diddy = T)
+
+rondo_dist_df <- rbind(rondo_dist_df, rondo_diddy_row)
+
+dist_pvalue(rondo_dist_df) |> filter(diddy == T)
+```
+
+```{r}
+rondo_dist_df.pca <- PCA(rondo_dist_df |> select(-c(diddy, dist)), scale.unit = T, graph = F)
+
+pca_diddy_viz(rondo_dist_df.pca, rondo_dist_df) + 
+  scale_color_manual(values = c("0" = "gray",
+                                "1" = "red"), 
+                       labels = c("False", "True")) +
+  labs(title = "Rajon Rondo's Diddy Games vs Simulated Games",
+       x = "Dimension 1",
+       y = "Dimension 2",
+       color = "Diddy Games", 
+       shape = "Diddy Games")
+```
+
+```{r}
+sum(mean_rondo_df$diff_pts > -5.31)
+sum(mean_rondo_df$diff_ast > -3.08)
+```
+
+```{r}
+# Add a new column to identify the condition where diff_pts is near 2.53
+mean_rondo_df$color_group_pts <- ifelse(mean_rondo_df$diff_pts >= -5.31 - 0.15 & mean_rondo_df$diff_pts <= -5.31 + 0.45, "Diddy", "Simulated")
+
+# Create the plot
+ggplot(mean_rondo_df, aes(x = diff_pts, fill = color_group_pts)) +
+  geom_histogram(bins = 40) + 
+  scale_fill_manual(values = c("Diddy" = "red", "Simulated" = "black")) +  # Set colors
+  labs(title = "Rajon Rondo Simulated Point Differential",
+       y = "Frequency", 
+       x = "Point Differential", fill = "") +
+  theme_bw()
+```
+
+```{r}
+# Add a new column to identify the condition where diff_pts is near 2.53
+mean_rondo_df$color_group_ast <- ifelse(mean_rondo_df$diff_ast >= -3.08 - 0.3 & mean_rondo_df$diff_ast <= -3.08 + 0.23, "Diddy", "Simulated")
+
+# Create the plot
+ggplot(mean_rondo_df, aes(x = diff_ast, fill = color_group_ast)) +
+  geom_histogram(bins = 40) + 
+  scale_fill_manual(values = c("Diddy" = "red", "Simulated" = "black")) +  # Set colors
+  labs(title = "Rajon Rondo Simulated Assists Differential",
+       y = "Frequency", 
+       x = "Assist Differential", fill = "") +
+  theme_bw()
+```
+
+## Kevin Garnett
+
+```{r}
+kg_sim <- n_sim("Kevin Garnett", 1000, playoff_years = list(2008, 2010, 2011, 2013))
+```
+
+```{r}
+kg_eval_df <- eval_sim("Kevin Garnett", kg_sim, career_stats_pg_df)
+mean_kg_df <- mean_eval_sim(kg_eval_df)
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+kg_dist_df <- sim_dist(mean_kg_df) |> arrange(dist)
+kg_dist_df$diddy <- F
+kg_diddy_row <- c(kg_diddy_vec, dist = kg_diddy_dist, diddy = T)
+
+kg_dist_df <- rbind(kg_dist_df, kg_diddy_row)
+
+dist_pvalue(kg_dist_df) |> filter(diddy == T)
+```
+
+```{r}
+kg_dist_df.pca <- PCA(kg_dist_df |> select(-c(diddy, dist)), scale.unit = T, graph = F)
+
+pca_diddy_viz(kg_dist_df.pca, kg_dist_df) + 
+  scale_color_manual(values = c("0" = "gray",
+                                "1" = "red"), 
+                       labels = c("False", "True")) +
+  labs(title = "Kevin Garnett's Diddy Games vs Simulated Games",
+       x = "Dimension 1",
+       y = "Dimension 2",
+       color = "Diddy Games", 
+       shape = "Diddy Games")
+```
+
+```{r}
+sum(mean_kg_df$diff_pts > -4.99)
+# sum(mean_kg_df$diff_trb > -0.87)
+sum(mean_kg_df$diff_ast > -1.23)
+# sum(mean_kg_df$diff_stl > -0.3)
+sum(mean_kg_df$diff_pf < 0.78)
+
+```
+
+```{r}
+# Add a new column to identify the condition where diff_pts is near 2.53
+mean_kg_df$color_group_pts <- ifelse(mean_kg_df$diff_pts >= -4.99 - 0.2 & mean_kg_df$diff_pts <= -4.99 + 0.3, "Diddy", "Simulated")
+
+# Create the plot
+ggplot(mean_kg_df, aes(x = diff_pts, fill = color_group_pts)) +
+  geom_histogram(bins = 35) + 
+  scale_fill_manual(values = c("Diddy" = "red", "Simulated" = "black")) +  # Set colors
+  labs(title = "Kevin Garnett Simulated Point Differential",
+       y = "Frequency", 
+       x = "Point Differential", fill = "") +
+  theme_bw()
+```
+
+```{r}
+# Add a new column to identify the condition where diff_pts is near 2.53
+mean_kg_df$color_group_ast <- ifelse(mean_kg_df$diff_ast >= -1.23 - 0.2 & mean_kg_df$diff_ast <= -1.23 + 0.1, "Diddy", "Simulated")
+
+# Create the plot
+ggplot(mean_kg_df, aes(x = diff_ast, fill = color_group_ast)) +
+  geom_histogram(bins = 20) + 
+  scale_fill_manual(values = c("Diddy" = "red", "Simulated" = "black")) +  # Set colors
+  labs(title = "Kevin Garnett Simulated Assist Differential",
+       y = "Frequency", 
+       x = "Assist Differential", fill = "") +
+  theme_bw()
+```
+
+```{r}
+# Add a new column to identify the condition where diff_pts is near 2.53
+mean_kg_df$color_group_pf <- ifelse(mean_kg_df$diff_pf >= 0.78 - 0.2 & mean_kg_df$diff_pf <= 0.78 + 0.1, "Diddy", "Simulated")
+
+# Create the plot
+ggplot(mean_kg_df, aes(x = diff_pf, fill = color_group_pf)) +
+  geom_histogram(bins = 16) + 
+  scale_fill_manual(values = c("Diddy" = "red", "Simulated" = "black")) +  # Set colors
+  labs(title = "Kevin Garnett Simulated Personal Foul Differential",
+       y = "Frequency", 
+       x = "Personal Foul Differential", fill = "") +
+  theme_bw()
+```
+
+## Lebron James
+
+```{r}
+lebron_sim <- n_sim("Lebron James", 1000, regular_years = list("2008-2009", "2010-2011", "2011-2012", "2012-2013"), playoff_years = list(2011, 2017, 2023))
+```
+
+```{r}
+lebron_sim
+```
+
+```{r}
+lebron_eval_df <- eval_sim("Lebron James", lebron_sim, career_stats_pg_df)
+mean_lebron_df <- mean_eval_sim(lebron_eval_df)
+```
+
+```{r}
+mean_lebron_playoffs_df <- mean_lebron_df |>
+  filter(season_type == "playoff") |> 
+  select(-sim_id)
+
+mean_lebron_regular_df <- mean_lebron_df |>
+  filter(season_type == "regular") |>
+  select(-sim_id)
+
+mean_lebron_combined_df <- mean_lebron_df |> 
+  group_by(sim_id) |>
+  summarize(across(c(diff_pts, diff_ast, diff_trb, diff_tov,
+                       diff_blk, diff_stl, diff_pf), mean), .groups = "drop") |>
+  select(-sim_id)
+```
+
+```{r}
+mean_lebron_playoffs_df
+mean_lebron_regular_df
+```
+
+```{r}
+lebron_diddy_playoffs_vec <- c(pts = 1.33, ast = -0.06, trb = 3.88, tov = -1.21, blk = 0.47, stl =	-0.22, pf = 0.40)
+lebron_diddy_regular_vec <- c(pts = 5.98, ast =	1.31, trb = -0.50, tov = -0.75, blk = 0.38, stl = -0.45, pf = -0.44)
+lebron_diddy_combined_vec <- c(pts = 3.99, ast = 0.72, trb = 1.37, tov = -0.95, blk =	0.42, stl = -0.35, pf = -0.08)
+```
+
+```{r}
+lebron_diddy_playoffs_dist <- diddy_dist(mean_lebron_playoffs_df, lebron_diddy_playoffs_vec)
+
+lebron_diddy_playoffs_dist
+
+lebron_playoffs_dist_df <- sim_dist(mean_lebron_playoffs_df) |> arrange(dist)
+lebron_playoffs_dist_df$diddy <- F
+lebron_playoffs_diddy_row <- c(lebron_diddy_playoffs_vec, dist = lebron_diddy_playoffs_dist, diddy = T)
+
+lebron_playoffs_dist_df <- rbind(lebron_playoffs_dist_df, lebron_playoffs_diddy_row)
+
+dist_pvalue(lebron_playoffs_dist_df) |> filter(diddy == T)
+```
+
+```{r}
+lebron_playoffs_dist_df.pca <- PCA(lebron_playoffs_dist_df |> select(-c(diddy, dist)), scale.unit = T, graph = F)
+
+pca_diddy_viz(lebron_playoffs_dist_df.pca, lebron_playoffs_dist_df) + 
+  scale_color_manual(values = c("0" = "gray",
+                                "1" = "red"), 
+                       labels = c("False", "True")) +
+  labs(title = "Lebron James's Playoff Diddy Games vs Simulated Games",
+       x = "Dimension 1",
+       y = "Dimension 2",
+       color = "Diddy Games", 
+       shape = "Diddy Games")
+```
+
+```{r}
+lebron_diddy_regular_dist <- diddy_dist(mean_lebron_regular_df, lebron_diddy_regular_vec)
+
+lebron_diddy_regular_dist
+
+lebron_regular_dist_df <- sim_dist(mean_lebron_regular_df) |> arrange(dist)
+lebron_regular_dist_df$diddy <- F
+lebron_regular_diddy_row <- c(lebron_diddy_regular_vec, dist = lebron_diddy_regular_dist, diddy = T)
+
+lebron_regular_dist_df <- rbind(lebron_regular_dist_df, lebron_regular_diddy_row)
+
+dist_pvalue(lebron_regular_dist_df) |> filter(diddy == T)
+```
+
+```{r}
+lebron_regular_dist_df.pca <- PCA(lebron_regular_dist_df |> select(-c(diddy, dist)), scale.unit = T, graph = F)
+
+pca_diddy_viz(lebron_regular_dist_df.pca, lebron_regular_dist_df) + 
+  scale_color_manual(values = c("0" = "gray",
+                                "1" = "red"), 
+                       labels = c("False", "True")) +
+  labs(title = "Lebron James's Regular Diddy Games vs Simulated Games",
+       x = "Dimension 1",
+       y = "Dimension 2",
+       color = "Diddy Games", 
+       shape = "Diddy Games")
+```
+
+```{r}
+lebron_diddy_combined_dist <- diddy_dist(mean_lebron_combined_df, lebron_diddy_combined_vec)
+
+lebron_diddy_combined_dist
+
+lebron_combined_dist_df <- sim_dist(mean_lebron_combined_df) |> arrange(dist)
+lebron_combined_dist_df$diddy <- F
+lebron_combined_diddy_row <- c(lebron_diddy_combined_vec, dist = lebron_diddy_combined_dist, diddy = T)
+
+lebron_combined_dist_df <- rbind(lebron_combined_dist_df, lebron_combined_diddy_row)
+
+dist_pvalue(lebron_combined_dist_df) |> filter(diddy == T)
+```
+
+```{r}
+lebron_combined_dist_df.pca <- PCA(lebron_combined_dist_df |> select(-c(diddy, dist)), scale.unit = T, graph = F)
+
+pca_diddy_viz(lebron_combined_dist_df.pca, lebron_combined_dist_df) + 
+  scale_color_manual(values = c("0" = "gray",
+                                "1" = "red"), 
+                       labels = c("False", "True")) +
+  labs(title = "Lebron James's Diddy Games vs Simulated Games",
+       x = "Dimension 1",
+       y = "Dimension 2",
+       color = "Diddy Games", 
+       shape = "Diddy Games")
+```
+
+## Pau Gasol
+
+```{r}
+gasol_sim <- n_sim("Pau Gasol", 1000, regular_years = list("2010-2011", "2013-2014"), playoff_years = list(2008, 2008, 2009, 2009, 2009, 2010))
+```
+
+```{r}
+gasol_eval_df <- eval_sim("Pau Gasol", gasol_sim, career_stats_pg_df)
+mean_gasol_df <- mean_eval_sim(gasol_eval_df)
+```
+
+```{r}
+gasol_diddy_playoffs_vec <- c(pts = -0.85, ast = 2.00, trb = 2.81, tov = -0.31, blk = -0.13, stl = 0.51, pf = 0.26)
+gasol_diddy_regular_vec <- c(pts = -0.07, ast = 2.16, trb = 3.07, tov = 2.46, blk = -1.56, stl =	0.48, pf = -0.28)
+gasol_diddy_combined_vec <- c(pts = -0.65, ast	 = 2.04, trb = 2.87, tov = 0.39, blk = -0.49, stl = 0.505, pf = 0.12)
+```
+
+```{r}
+mean_gasol_playoffs_df <- mean_gasol_df |>
+  filter(season_type == "playoff") |> 
+  select(-sim_id)
+
+mean_gasol_regular_df <- mean_gasol_df |>
+  filter(season_type == "regular") |>
+  select(-sim_id)
+
+mean_gasol_combined_df <- mean_gasol_df |> 
+  group_by(sim_id) |>
+  summarize(across(c(diff_pts, diff_ast, diff_trb, diff_tov,
+                       diff_blk, diff_stl, diff_pf), mean), .groups = "drop") |>
+  select(-sim_id)
+```
+
+```{r}
+gasol_diddy_playoffs_dist <- diddy_dist(mean_gasol_playoffs_df, gasol_diddy_playoffs_vec)
+
+gasol_diddy_playoffs_dist
+
+gasol_playoffs_dist_df <- sim_dist(mean_gasol_playoffs_df) |> arrange(dist)
+gasol_playoffs_dist_df$diddy <- F
+gasol_playoffs_diddy_row <- c(gasol_diddy_playoffs_vec, dist = gasol_diddy_playoffs_dist, diddy = T)
+
+gasol_playoffs_dist_df <- rbind(gasol_playoffs_dist_df, gasol_playoffs_diddy_row)
+
+dist_pvalue(gasol_playoffs_dist_df) |> filter(diddy == T)
+```
+
+```{r}
+gasol_playoffs_dist_df.pca <- PCA(gasol_playoffs_dist_df |> select(-c(diddy, dist)), scale.unit = T, graph = F)
+
+pca_diddy_viz(gasol_playoffs_dist_df.pca, gasol_playoffs_dist_df) + 
+  scale_color_manual(values = c("0" = "gray",
+                                "1" = "red"), 
+                       labels = c("False", "True")) +
+  labs(title = "Pau Gasol's Playoff Diddy Games vs Simulated Games",
+       x = "Dimension 1",
+       y = "Dimension 2",
+       color = "Diddy Games", 
+       shape = "Diddy Games")
+```
+
+```{r}
+gasol_diddy_regular_dist <- diddy_dist(mean_gasol_regular_df, gasol_diddy_regular_vec)
+
+gasol_diddy_regular_dist
+
+gasol_regular_dist_df <- sim_dist(mean_gasol_regular_df) |> arrange(dist)
+gasol_regular_dist_df$diddy <- F
+gasol_regular_diddy_row <- c(gasol_diddy_regular_vec, dist = gasol_diddy_regular_dist, diddy = T)
+
+gasol_regular_dist_df <- rbind(gasol_regular_dist_df, gasol_regular_diddy_row)
+
+dist_pvalue(gasol_regular_dist_df) |> filter(diddy == T)
+```
+
+```{r}
+gasol_regular_dist_df.pca <- PCA(gasol_regular_dist_df |> select(-c(diddy, dist)), scale.unit = T, graph = F)
+
+pca_diddy_viz(gasol_regular_dist_df.pca, gasol_regular_dist_df) + 
+  scale_color_manual(values = c("0" = "gray",
+                                "1" = "red"), 
+                       labels = c("False", "True")) +
+  labs(title = "Pau Gasol's Regular Diddy Games vs Simulated Games",
+       x = "Dimension 1",
+       y = "Dimension 2",
+       color = "Diddy Games", 
+       shape = "Diddy Games")
+```
+
+```{r}
+gasol_diddy_combined_dist <- diddy_dist(mean_gasol_combined_df, gasol_diddy_combined_vec)
+
+gasol_diddy_combined_dist
+
+gasol_combined_dist_df <- sim_dist(mean_gasol_combined_df) |> arrange(dist)
+gasol_combined_dist_df$diddy <- F
+gasol_combined_diddy_row <- c(gasol_diddy_combined_vec, dist = gasol_diddy_combined_dist, diddy = T)
+
+gasol_combined_dist_df <- rbind(gasol_combined_dist_df, gasol_combined_diddy_row)
+
+dist_pvalue(gasol_combined_dist_df) |> filter(diddy == T)
+```
+
+```{r}
+gasol_combined_dist_df.pca <- PCA(gasol_combined_dist_df |> select(-c(diddy, dist)), scale.unit = T, graph = F)
+
+pca_diddy_viz(gasol_combined_dist_df.pca, gasol_combined_dist_df) + 
+  scale_color_manual(values = c("0" = "gray",
+                                "1" = "red"), 
+                       labels = c("False", "True")) +
+  labs(title = "Pau Gasol's Diddy Games vs Simulated Games",
+       x = "Dimension 1",
+       y = "Dimension 2",
+       color = "Diddy Games", 
+       shape = "Diddy Games")
+```
+
+```{r}
+fviz_eig(gasol_combined_dist_df.pca, addlabels = TRUE, main = "Statistics Represented in Lower Dimensional Components")
+```

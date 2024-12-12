@@ -97,7 +97,7 @@ ggplot(game_count_df, aes(x = fct_infreq(team), fill = team)) +
 ## Getting the Distribution of Players
 
 ```{r}
-diddy_csv$player |> length()
+unique(diddy_csv$player) |> length()
 ```
 
 ```{r}
@@ -256,15 +256,6 @@ combined_plots <- function(combined_df, stat) {
       stat_type == stat ~ paste("Diddy", stat)
     ))
   
-  
-  
-  combined_plots <- function(combined_df, stat) { 
-  player_name <- combined_df$player[1]
-  select_cols <- c("player", "season", "season_type", "date", stat, paste0("career_", stat))
-  
-  combined_df <- combined_df |>
-    select(all_of(select_cols))
-  
   combined_df_long <- combined_df |> 
     pivot_longer(cols = all_of(c(stat, paste0("career_", stat))),
                  names_to = "stat_type",
@@ -274,7 +265,7 @@ combined_plots <- function(combined_df, stat) {
       stat_type == stat ~ paste("Diddy", stat)
     ))
   
-  fill_labels <- setNames(c("pink", "#80ee90"), 
+  fill_labels <- setNames(c("red", "green"), 
                           c(paste0("Diddy ", stat), paste0("Season ", stat)))
   
   ggplot(combined_df_long, 
@@ -326,6 +317,10 @@ diff_averages <- function(stat_diff_df) {
 ```
 
 ## Dwyane Wade
+
+```{r}
+top_20_playoffs_seasons
+```
 
 ```{r}
 dwade <- "Dwyane Wade"
@@ -426,6 +421,55 @@ stat_differential(lodom_combined_df)
 
 ## Pau Gasol
 
+```{r}
+gasol <- "Pau Gasol"
+
+gasol_combined_df <- combine_career_diddy(top_20_playoffs_seasons, career_stats_pg_df, gasol)
+gasol_pts <- combined_plots(gasol_combined_df, "pts")
+gasol_ast <- combined_plots(gasol_combined_df, "ast")
+gasol_trb <- combined_plots(gasol_combined_df, "trb")
+
+gasol_diff <- stat_differential(gasol_combined_df)
+```
+
+
+```{r}
+colnames(career_stats_df)
+
+gasol_career_totals <- career_stats_df |> filter(player == "Pau Gasol") |> 
+  select(pts, ast, trb, tov,
+                       blk, stl, pf, g) |>
+  colSums()
+  
+gasol_career_totals
+```
+```{r}
+gasol_career_totals / gasol_career_totals[["g"]]
+```
+
+
+```{r}
+gasol_combined_df |> 
+  select(pts, ast, trb, tov,
+                       blk, stl, pf) |>
+  colSums() / 8 
+```
+
+```{r}
+gasol_diff
+```
+
+```{r}
+gasol_diff |> 
+  group_by(season_type) |>
+  summarize(across(c(diff_pts, diff_ast, diff_trb, diff_tov,
+                       diff_blk, diff_stl, diff_pf), mean), .groups = "drop")
+
+gasol_diff |> 
+  summarize(across(c(diff_pts, diff_ast, diff_trb, diff_tov,
+                       diff_blk, diff_stl, diff_pf), mean), .groups = "drop")
+```
+
 ## Derek Fisher
 
 ## Lebron James
@@ -438,7 +482,18 @@ goat_pts <- combined_plots(goat_combined_df, "pts")
 goat_ast <- combined_plots(goat_combined_df, "ast")
 goat_trb <- combined_plots(goat_combined_df, "trb")
 
-stat_differential(goat_combined_df)
+goat_diff <- stat_differential(goat_combined_df)
+```
+
+```{r}
+goat_diff |> 
+  group_by(season_type) |>
+  summarize(across(c(diff_pts, diff_ast, diff_trb, diff_tov,
+                       diff_blk, diff_stl, diff_pf), mean), .groups = "drop")
+
+goat_diff |> 
+  summarize(across(c(diff_pts, diff_ast, diff_trb, diff_tov,
+                       diff_blk, diff_stl, diff_pf), mean), .groups = "drop")
 ```
 
 ```{r}
@@ -462,6 +517,32 @@ goat_trb
 ## Kevin Garnett
 
 ## Luke Walton
+
+```{r}
+walton <- "Luke Walton"
+
+walton_combined_df <- combine_career_diddy(top_20_playoffs_seasons, career_stats_pg_df, walton)
+```
+
+```{r}
+walton_combined_df
+```
+
+```{r}
+
+walton_diddy_minutes <- sapply(walton_combined_df$mp , function(time) {
+  parts <- as.numeric(unlist(strsplit(time, ":")))
+  hours <- parts[1]
+  minutes <- parts[2]
+  hours + minutes / 60
+}) |> unname()
+
+
+
+mean(walton_combined_df$career_mp)
+
+mean((walton_combined_df$career_mp - walton_diddy_minutes) / (walton_combined_df$career_mp))
+```
 
 ## Paul Pierce
 
@@ -600,6 +681,36 @@ ggplot(pp_playoff_df, aes(x = pra, y = tov)) +
   geom_smooth(method="lm", color = "black", alpha = 0.7) + 
   labs(y = "Turnovers", x = "Points, Rebounds, and Assists (PRA)", title = "Relationship between PRA and TOV for Paul Pierce in the Playoffs", color = "Diddy Attendance") +
   theme_classic()
+```
+
+```{r}
+wade_regular_df <- read_csv("~/BSAFall2024/DiddyProject/career_data/dwyane_wade_regular.csv")
+```
+
+```{r}
+wade_regular_df <- wade_regular_df |>
+  mutate(pra = pts + trb + ast)
+```
+
+```{r}
+wade_regular_df <- wade_regular_df |> 
+  mutate(diddy = if_else(date_game %in% dwade_combined_df$date, T, F))
+```
+
+```{r}
+ggplot(wade_regular_df, aes(x = pra, y = tov)) + 
+  geom_point(aes(color = diddy)) + 
+  geom_smooth(method="lm", color = "black", alpha = 0.7) + 
+  labs(y = "Turnovers", x = "Points, Rebounds, and Assists (PRA)", title = "Relationship between PRA and TOV for Dwyane Wade in the Regular Season", color = "Diddy Attendance") +
+  theme_classic()
+```
+
+```{r}
+dwade_lm <- lm(tov~pra, data = wade_regular_df)
+```
+
+```{r}
+summary(dwade_lm)
 ```
 
 ## All Negative
